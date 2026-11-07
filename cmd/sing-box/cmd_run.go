@@ -181,6 +181,11 @@ func create(options option.Options) (*box.Box, context.CancelFunc, error) {
 	return instance, cancel, nil
 }
 
+type reloadAttempt struct {
+	previousOptions option.Options
+	revision        string
+}
+
 func run() error {
 	optionsList, err := readConfig()
 	if err != nil {
@@ -194,13 +199,44 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	store, reloadResult := newManagedConfigServices()
+	if store != nil {
+		globalCtx = service.ContextWith[adapter.ConfigStore](globalCtx, store)
+		globalCtx = service.ContextWith[adapter.ManagedReloadResult](globalCtx, reloadResult)
+	}
 	osSignals := make(chan os.Signal, 1)
 	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(osSignals)
+	var attempt *reloadAttempt
 	for {
 		instance, cancel, createErr := create(options)
 		if createErr != nil {
-			return createErr
+			if attempt == nil {
+				return createErr
+			}
+			failure := rollbackManagedConfiguration(store, attempt.revision, createErr)
+			if attempt.revision != "" {
+				logManagedReloadFailure(failure)
+			} else {
+				log.Error(E.Cause(createErr, "configuration reload failed; restored previous instance"))
+			}
+			// Always restart the known-good in-memory options, even if rewriting
+			// the recovery file failed. This keeps the management API reachable.
+			options = attempt.previousOptions
+			revision := attempt.revision
+			attempt = nil
+			instance, cancel, createErr = create(options)
+			if createErr != nil {
+				return E.New(failure, "; restore previous instance failed: ", createErr)
+			}
+			if revision != "" {
+				reloadResult.Finish(revision, failure)
+			}
+		} else if attempt != nil {
+			if attempt.revision != "" {
+				reloadResult.Finish(attempt.revision, nil)
+			}
+			attempt = nil
 		}
 		runtimeDebug.FreeOSMemory()
 		for {
@@ -223,6 +259,23 @@ func run() error {
 				}
 				reloadTag = true
 			}
+			var nextOptions option.Options
+			var revision string
+			if reloadTag {
+				nextOptions, err = readConfigAndMerge()
+				if reloadResult != nil {
+					revision = reloadResult.Pending()
+				}
+				if err != nil {
+					if revision != "" {
+						failure := rollbackManagedConfiguration(store, revision, err)
+						logManagedReloadFailure(failure)
+						reloadResult.Finish(revision, failure)
+						continue
+					}
+					return err
+				}
+			}
 			cancel()
 			closeCtx, closed := context.WithCancel(context.Background())
 			go closeMonitor(closeCtx)
@@ -234,11 +287,9 @@ func run() error {
 				}
 				return nil
 			}
+			attempt = &reloadAttempt{previousOptions: options, revision: revision}
+			options = nextOptions
 			break
-		}
-		options, err = readConfigAndMerge()
-		if err != nil {
-			return err
 		}
 	}
 }
