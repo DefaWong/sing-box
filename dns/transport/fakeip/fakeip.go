@@ -3,6 +3,7 @@ package fakeip
 import (
 	"context"
 	"net/netip"
+	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -60,6 +61,41 @@ func (t *Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error 
 func (t *Transport) Reset() {
 }
 
+const (
+	edns0OptionFakeIPOutbound uint16 = 65001
+	fakeIPOutboundVersion     byte   = 1
+	fakeIPOutboundOpSet       byte   = 1
+	fakeIPOutboundOpClear     byte   = 2
+)
+
+func extractFakeIPOutbound(message *mDNS.Msg) (string, bool) {
+	if message == nil {
+		return "", false
+	}
+	opt := message.IsEdns0()
+	if opt == nil {
+		return "", false
+	}
+	for _, option := range opt.Option {
+		localOpt, ok := option.(*mDNS.EDNS0_LOCAL)
+		if !ok || localOpt.Code != edns0OptionFakeIPOutbound {
+			continue
+		}
+		data := localOpt.Data
+		if len(data) < 2 || data[0] != fakeIPOutboundVersion {
+			continue
+		}
+		switch data[1] {
+		case fakeIPOutboundOpSet:
+			tag := strings.TrimSpace(string(data[2:]))
+			return tag, true
+		case fakeIPOutboundOpClear:
+			return "", true
+		}
+	}
+	return "", false
+}
+
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	question := message.Question[0]
 	if question.Qtype != mDNS.TypeA && question.Qtype != mDNS.TypeAAAA {
@@ -72,7 +108,8 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 	if len(domain) > 255 {
 		return nil, E.New("domain name too long for fakeip")
 	}
-	address, err := t.store.Create(domain, question.Qtype == mDNS.TypeAAAA)
+	outbound, hasDirective := extractFakeIPOutbound(message)
+	address, err := t.store.CreateWithOutbound(domain, question.Qtype == mDNS.TypeAAAA, outbound, hasDirective)
 	if err != nil {
 		return nil, err
 	}

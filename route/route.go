@@ -114,7 +114,15 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		return err
 	}
 	var selectedOutbound adapter.Outbound
-	if selectedRule != nil {
+	if metadata.FakeIPOutbound != "" {
+		var loaded bool
+		selectedOutbound, loaded = r.outbound.Outbound(metadata.FakeIPOutbound)
+		if !loaded {
+			buf.ReleaseMulti(buffers)
+			return E.New("outbound not found: ", metadata.FakeIPOutbound)
+		}
+		metadata.RouteRule = "fakeip_outbound=" + metadata.FakeIPOutbound
+	} else if selectedRule != nil {
 		switch action := selectedRule.Action().(type) {
 		case *R.RuleActionRoute:
 			var loaded bool
@@ -147,7 +155,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 			return nil
 		}
 	}
-	if selectedRule == nil {
+	if selectedOutbound == nil && selectedRule == nil {
 		selectedOutbound = r.outbound.Default()
 	}
 	chain, err := resolveOutbound(selectedOutbound, N.NetworkTCP, &metadata)
@@ -312,7 +320,15 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	}
 	var selectedOutbound adapter.Outbound
 	var selectReturn bool
-	if selectedRule != nil {
+	if metadata.FakeIPOutbound != "" {
+		var loaded bool
+		selectedOutbound, loaded = r.outbound.Outbound(metadata.FakeIPOutbound)
+		if !loaded {
+			N.ReleaseMultiPacketBuffer(packetBuffers)
+			return E.New("outbound not found: ", metadata.FakeIPOutbound)
+		}
+		metadata.RouteRule = "fakeip_outbound=" + metadata.FakeIPOutbound
+	} else if selectedRule != nil {
 		switch action := selectedRule.Action().(type) {
 		case *R.RuleActionRoute:
 			var loaded bool
@@ -341,7 +357,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 			return r.hijackDNSPacket(ctx, conn, packetBuffers, metadata, onClose)
 		}
 	}
-	if selectedRule == nil || selectReturn {
+	if selectedOutbound == nil && (selectedRule == nil || selectReturn) {
 		selectedOutbound = r.outbound.Default()
 	}
 	chain, err := resolveOutbound(selectedOutbound, N.NetworkUDP, &metadata)
@@ -407,6 +423,13 @@ func (r *Router) PreMatch(metadata adapter.InboundContext, firstPacket []byte) a
 	err := r.prepareMatchMetadata(ctx, &metadata)
 	if err != nil {
 		return continueResult
+	}
+	if metadata.FakeIPOutbound != "" {
+		if _, loaded := r.outbound.Outbound(metadata.FakeIPOutbound); !loaded {
+			r.logger.ErrorContext(ctx, "outbound not found: ", metadata.FakeIPOutbound)
+			return adapter.PreMatchResult{Action: adapter.PreMatchReject}
+		}
+		return r.preMatchFlow(ctx, &metadata, packetDestination, nil, metadata.FakeIPOutbound)
 	}
 	for currentRuleIndex, currentRule := range r.rules {
 		if currentRule.Disabled() {
@@ -716,7 +739,12 @@ func (r *Router) prepareMatchMetadata(ctx context.Context, metadata *adapter.Inb
 				Port: metadata.Destination.Port,
 			}
 			metadata.FakeIP = true
-			r.logger.DebugContext(ctx, "found fakeip domain: ", domain)
+			if outbound, outboundLoaded := r.dnsTransport.FakeIP().Store().LookupOutbound(domain); outboundLoaded && outbound != "" {
+				metadata.FakeIPOutbound = outbound
+				r.logger.DebugContext(ctx, "found fakeip domain: ", domain, ", outbound: ", outbound)
+			} else {
+				r.logger.DebugContext(ctx, "found fakeip domain: ", domain)
+			}
 		}
 	} else if metadata.Domain == "" {
 		domain, loaded := r.dns.LookupReverseMapping(metadata.Destination.Addr)
@@ -742,6 +770,9 @@ func (r *Router) matchRule(
 ) {
 	fatalErr = r.prepareMatchMetadata(ctx, metadata)
 	if fatalErr != nil {
+		return
+	}
+	if metadata.FakeIPOutbound != "" {
 		return
 	}
 

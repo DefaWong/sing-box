@@ -149,6 +149,27 @@ func (c *CacheFile) flushCacheWrites(final bool) time.Duration {
 		}
 	}
 
+	c.saveFakeIPAccess.RLock()
+	fakeIPOutbounds := maps.Clone(c.saveOutbound)
+	c.saveFakeIPAccess.RUnlock()
+	for domain, outbound := range fakeIPOutbounds {
+		c.saveFakeIPAccess.RLock()
+		current, exists := c.saveOutbound[domain]
+		c.saveFakeIPAccess.RUnlock()
+		if !exists || current != outbound {
+			continue
+		}
+		err := c.writeFakeIPOutbound(domain, outbound)
+		failed(err)
+		if err == nil {
+			c.saveFakeIPAccess.Lock()
+			if c.saveOutbound[domain] == outbound {
+				delete(c.saveOutbound, domain)
+			}
+			c.saveFakeIPAccess.Unlock()
+		}
+	}
+
 	c.saveMetadataAccess.Lock()
 	metadata, due := c.saveMetadata, c.saveMetadataDue
 	c.saveMetadataAccess.Unlock()

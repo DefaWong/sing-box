@@ -16,10 +16,11 @@ import (
 const fakeipBucketPrefix = "fakeip_"
 
 var (
-	bucketFakeIP        = []byte(fakeipBucketPrefix + "address")
-	bucketFakeIPDomain4 = []byte(fakeipBucketPrefix + "domain4")
-	bucketFakeIPDomain6 = []byte(fakeipBucketPrefix + "domain6")
-	keyMetadata         = []byte(fakeipBucketPrefix + "metadata")
+	bucketFakeIP         = []byte(fakeipBucketPrefix + "address")
+	bucketFakeIPDomain4  = []byte(fakeipBucketPrefix + "domain4")
+	bucketFakeIPDomain6  = []byte(fakeipBucketPrefix + "domain6")
+	bucketFakeIPOutbound = []byte(fakeipBucketPrefix + "outbound")
+	keyMetadata          = []byte(fakeipBucketPrefix + "metadata")
 )
 
 func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
@@ -230,6 +231,57 @@ func (c *CacheFile) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr, bo
 	return address, address.IsValid()
 }
 
+func (c *CacheFile) FakeIPStoreOutbound(domain string, outbound string) error {
+	c.cacheWriteAccess.Lock()
+	defer c.cacheWriteAccess.Unlock()
+	c.saveFakeIPAccess.Lock()
+	defer c.saveFakeIPAccess.Unlock()
+	err := c.writeFakeIPOutbound(domain, outbound)
+	if err == nil {
+		delete(c.saveOutbound, domain)
+	} else {
+		c.saveOutbound[domain] = outbound
+		c.wakeCacheWriter()
+	}
+	return err
+}
+
+func (c *CacheFile) writeFakeIPOutbound(domain string, outbound string) error {
+	return c.update(func(tx *bbolt.Tx) error {
+		if outbound == "" {
+			bucket := tx.Bucket(bucketFakeIPOutbound)
+			if bucket == nil {
+				return nil
+			}
+			return bucket.Delete([]byte(domain))
+		}
+		bucket, err := tx.CreateBucketIfNotExists(bucketFakeIPOutbound)
+		if err != nil {
+			return err
+		}
+		return bucket.Put([]byte(domain), []byte(outbound))
+	})
+}
+
+func (c *CacheFile) FakeIPLoadOutbound(domain string) (string, bool) {
+	c.saveFakeIPAccess.RLock()
+	cachedOutbound, cached := c.saveOutbound[domain]
+	c.saveFakeIPAccess.RUnlock()
+	if cached {
+		return cachedOutbound, cachedOutbound != ""
+	}
+	var outbound string
+	_ = c.view(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(bucketFakeIPOutbound)
+		if bucket == nil {
+			return nil
+		}
+		outbound = string(bucket.Get([]byte(domain)))
+		return nil
+	})
+	return outbound, outbound != ""
+}
+
 func (c *CacheFile) FakeIPReset() error {
 	c.cacheWriteAccess.Lock()
 	defer c.cacheWriteAccess.Unlock()
@@ -237,12 +289,13 @@ func (c *CacheFile) FakeIPReset() error {
 	clear(c.saveDomain)
 	clear(c.saveAddress4)
 	clear(c.saveAddress6)
+	clear(c.saveOutbound)
 	c.saveFakeIPAccess.Unlock()
 	c.saveMetadataAccess.Lock()
 	c.saveMetadata = nil
 	c.saveMetadataAccess.Unlock()
 	return c.batch(func(tx *bbolt.Tx) error {
-		for _, bucketName := range [][]byte{bucketFakeIP, bucketFakeIPDomain4, bucketFakeIPDomain6} {
+		for _, bucketName := range [][]byte{bucketFakeIP, bucketFakeIPDomain4, bucketFakeIPDomain6, bucketFakeIPOutbound} {
 			if tx.Bucket(bucketName) == nil {
 				continue
 			}

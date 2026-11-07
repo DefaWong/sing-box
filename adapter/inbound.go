@@ -109,6 +109,7 @@ type InboundContext struct {
 	QueryClientSubnet                   netip.Prefix
 	QueryDNSSEC                         bool
 	FakeIP                              bool
+	FakeIPOutbound                      string
 	PreMatch                            bool
 	DestOverride                        bool
 

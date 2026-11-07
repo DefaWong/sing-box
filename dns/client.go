@@ -373,7 +373,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				return it.Option() == dns.EDNS0SUBNET
 			}))
 	message = c.prepareExchangeMessage(message, options)
-	disableCache := !isSimpleRequest || c.disableCache || options.DisableCache
+	disableCache := !isSimpleRequest || c.disableCache || options.DisableCache || (transport != nil && transport.Type() == C.DNSTypeFakeIP)
 	operation := &exchangeOperation{
 		message:         message,
 		question:        question,

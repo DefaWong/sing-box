@@ -109,7 +109,14 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
+	return s.CreateWithOutbound(domain, isIPv6, "", false)
+}
+
+func (s *Store) CreateWithOutbound(domain string, isIPv6 bool, outbound string, updateOutbound bool) (netip.Addr, error) {
 	if address, loaded := s.storage.FakeIPLoadDomain(domain, isIPv6); loaded {
+		if updateOutbound {
+			s.storeOutbound(domain, outbound)
+		}
 		return address, nil
 	}
 
@@ -118,6 +125,9 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 
 	// Double-check after acquiring lock
 	if address, loaded := s.storage.FakeIPLoadDomain(domain, isIPv6); loaded {
+		if updateOutbound {
+			s.storeOutbound(domain, outbound)
+		}
 		return address, nil
 	}
 
@@ -147,6 +157,9 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 	if err != nil {
 		s.logger.Warn("save FakeIP cache: ", err)
 	}
+	if updateOutbound {
+		s.storeOutbound(domain, outbound)
+	}
 	s.storage.FakeIPSaveMetadataAsync(&adapter.FakeIPMetadata{
 		Inet4Range:   s.inet4Range,
 		Inet6Range:   s.inet6Range,
@@ -158,6 +171,21 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 
 func (s *Store) Lookup(address netip.Addr) (string, bool) {
 	return s.storage.FakeIPLoad(address)
+}
+
+// storeOutbound applies an AtomDNS directive. Every FakeIP query carries one,
+// so skip the persistent write when the binding is unchanged.
+func (s *Store) storeOutbound(domain string, outbound string) {
+	if current, _ := s.storage.FakeIPLoadOutbound(domain); current == outbound {
+		return
+	}
+	if err := s.storage.FakeIPStoreOutbound(domain, outbound); err != nil {
+		s.logger.Warn("save FakeIP outbound: ", err)
+	}
+}
+
+func (s *Store) LookupOutbound(domain string) (string, bool) {
+	return s.storage.FakeIPLoadOutbound(domain)
 }
 
 // Reset drops all mappings and restarts allocation from the beginning of the ranges.

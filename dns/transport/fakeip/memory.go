@@ -16,13 +16,15 @@ type MemoryStorage struct {
 	addressCache  map[netip.Addr]string
 	domainCache4  map[string]netip.Addr
 	domainCache6  map[string]netip.Addr
+	outboundCache map[string]string
 }
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		addressCache: make(map[netip.Addr]string),
-		domainCache4: make(map[string]netip.Addr),
-		domainCache6: make(map[string]netip.Addr),
+		addressCache:  make(map[netip.Addr]string),
+		domainCache4:  make(map[string]netip.Addr),
+		domainCache6:  make(map[string]netip.Addr),
+		outboundCache: make(map[string]string),
 	}
 }
 
@@ -81,12 +83,31 @@ func (s *MemoryStorage) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr
 	}
 }
 
+func (s *MemoryStorage) FakeIPStoreOutbound(domain string, outbound string) error {
+	s.domainAccess.Lock()
+	if outbound == "" {
+		delete(s.outboundCache, domain)
+	} else {
+		s.outboundCache[domain] = outbound
+	}
+	s.domainAccess.Unlock()
+	return nil
+}
+
+func (s *MemoryStorage) FakeIPLoadOutbound(domain string) (string, bool) {
+	s.domainAccess.RLock()
+	defer s.domainAccess.RUnlock()
+	outbound, loaded := s.outboundCache[domain]
+	return outbound, loaded && outbound != ""
+}
+
 func (s *MemoryStorage) FakeIPReset() error {
 	s.addressAccess.Lock()
 	s.domainAccess.Lock()
 	s.addressCache = make(map[netip.Addr]string)
 	s.domainCache4 = make(map[string]netip.Addr)
 	s.domainCache6 = make(map[string]netip.Addr)
+	s.outboundCache = make(map[string]string)
 	s.domainAccess.Unlock()
 	s.addressAccess.Unlock()
 	return nil

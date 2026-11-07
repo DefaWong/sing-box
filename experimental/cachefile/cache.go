@@ -66,6 +66,7 @@ type CacheFile struct {
 	saveDomain              map[netip.Addr]string
 	saveAddress4            map[string]netip.Addr
 	saveAddress6            map[string]netip.Addr
+	saveOutbound            map[string]string
 	saveRDRCAccess          sync.RWMutex
 	saveRDRC                map[saveCacheKey]time.Time
 	saveDNSCacheAccess      sync.RWMutex
@@ -127,6 +128,7 @@ func New(ctx context.Context, logger logger.Logger, options option.CacheFileOpti
 		saveDomain:   make(map[netip.Addr]string),
 		saveAddress4: make(map[string]netip.Addr),
 		saveAddress6: make(map[string]netip.Addr),
+		saveOutbound: make(map[string]string),
 		saveRDRC:     make(map[saveCacheKey]time.Time),
 		saveDNSCache: make(map[saveCacheKey]saveDNSCacheEntry),
 	}
