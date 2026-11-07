@@ -27,3 +27,18 @@ func TestProviderRemoteSinglePath(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(content), &options))
 	}
 }
+
+func TestProviderRemoteExplicitEmptyHTTPClient(t *testing.T) {
+	for _, content := range []string{
+		`{"url":"https://example.com/provider","http_client":{}}`,
+		`{"url":"https://example.com/provider","http_client":{"version":2}}`,
+	} {
+		var options ProviderRemoteOptions
+		require.NoError(t, json.Unmarshal([]byte(content), &options))
+		require.NotNil(t, options.HTTPClient)
+		require.Empty(t, options.HTTPClient.Detour)
+	}
+	var options ProviderRemoteOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"url":"https://example.com/provider"}`), &options))
+	require.Nil(t, options.HTTPClient)
+}

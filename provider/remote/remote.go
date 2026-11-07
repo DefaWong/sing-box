@@ -233,6 +233,14 @@ func (s *ProviderRemote) Close() error {
 
 func (s *ProviderRemote) resolveTransport() (adapter.HTTPTransport, error) {
 	httpClientManager := service.FromContext[adapter.HTTPClientManager](s.ctx)
+	// An explicitly empty object means a direct download, not the route final
+	// outbound. Keep nil (field omitted) on sing-box's default HTTP transport.
+	if s.httpClientOptions != nil && s.httpClientOptions.IsEmpty() {
+		if s.downloadDetour != "" {
+			return nil, E.New("http_client conflicts with deprecated download_detour field")
+		}
+		return httpClientManager.ResolveTransport(s.ctx, s.logger, option.HTTPClientOptions{})
+	}
 	if s.httpClientOptions != nil && !s.httpClientOptions.IsEmpty() {
 		if s.downloadDetour != "" {
 			return nil, E.New("http_client conflicts with deprecated download_detour field")

@@ -33,6 +33,16 @@ func (h *Provider) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	if err != nil {
 		return err
 	}
+	// An empty http_client object is meaningful: it explicitly selects a
+	// direct download instead of the default (possibly proxied) transport.
+	// Decode its presence independently of the options object merge, which
+	// drops empty objects.
+	var raw struct {
+		HTTPClient json.RawMessage `json:"http_client"`
+	}
+	if err := json.UnmarshalContext(ctx, content, &raw); err != nil {
+		return err
+	}
 	registry := service.FromContext[ProviderOptionsRegistry](ctx)
 	if registry == nil {
 		return E.New("missing provider options registry in context")
@@ -44,6 +54,9 @@ func (h *Provider) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	err = badjson.UnmarshallExcludedContext(ctx, content, (*_Provider)(h), options)
 	if err != nil {
 		return err
+	}
+	if remote, isRemote := options.(*ProviderRemoteOptions); isRemote && raw.HTTPClient != nil && remote.HTTPClient == nil {
+		remote.HTTPClient = &HTTPClientOptions{}
 	}
 	h.Options = options
 	return nil
