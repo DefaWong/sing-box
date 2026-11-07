@@ -142,3 +142,20 @@ func TestParseHysteria2LinkOptions(t *testing.T) {
 	require.Equal(t, "example.com", options.TLS.ServerName)
 	require.Equal(t, "AA:BB", options.TLS.CertificatePinSHA256)
 }
+
+func TestParseSOCKSLink(t *testing.T) {
+	outbound, err := ParseSubscriptionLink("socks5h://user:pass@example.com:1080#remote-dns")
+	require.NoError(t, err)
+	require.Equal(t, "remote-dns", outbound.Tag)
+	options := outbound.Options.(*option.SOCKSOutboundOptions)
+	require.Equal(t, "example.com", options.Server)
+	require.Equal(t, uint16(1080), options.ServerPort)
+	require.Equal(t, "user", options.Username)
+	require.Equal(t, "pass", options.Password)
+	require.Equal(t, "5", options.Version)
+}
+
+func TestParseSOCKSLinkRejectsInvalidAddress(t *testing.T) {
+	_, err := ParseSubscriptionLink("socks5h://example.com")
+	require.Error(t, err)
+}

@@ -40,6 +40,8 @@ func ParseSubscriptionLink(link string) (option.Outbound, error) {
 		return parseHysteria2Link(link)
 	case "anytls":
 		return parseAnyTLSLink(link)
+	case "socks", "socks5", "socks5h":
+		return parseSOCKSLink(link)
 	}
 	result[3], _ = DecodeBase64URLSafe(result[3])
 	link = strings.Join(result[1:], "")
@@ -51,6 +53,36 @@ func ParseSubscriptionLink(link string) (option.Outbound, error) {
 	default:
 		return option.Outbound{}, E.New("unsupported scheme: ", scheme)
 	}
+}
+
+func parseSOCKSLink(link string) (option.Outbound, error) {
+	linkURL, err := url.Parse(link)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	if linkURL.Hostname() == "" {
+		return option.Outbound{}, E.New("missing server address")
+	}
+	port, err := strconv.ParseUint(linkURL.Port(), 10, 16)
+	if err != nil || port == 0 {
+		return option.Outbound{}, E.New("invalid server port")
+	}
+	options := option.SOCKSOutboundOptions{
+		ServerOptions: option.ServerOptions{
+			Server:     linkURL.Hostname(),
+			ServerPort: uint16(port),
+		},
+		Version: "5",
+	}
+	if linkURL.User != nil {
+		options.Username = linkURL.User.Username()
+		options.Password, _ = linkURL.User.Password()
+	}
+	return option.Outbound{
+		Type:    C.TypeSOCKS,
+		Tag:     linkURL.Fragment,
+		Options: &options,
+	}, nil
 }
 
 func StringToType[T any](str string) T {
